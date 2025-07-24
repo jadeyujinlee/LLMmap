@@ -3,7 +3,12 @@ import pickle
 import hashlib
 import os, glob, random
 import re
-import tensorflow as tf
+import json
+from typing import Any, Dict, Union
+
+# Define what we consider a “simple” / primitive JSON-safe type
+Primitive = Union[str, int, float, bool, None]
+
 
 def mkdir(path):
     try:
@@ -32,17 +37,11 @@ def sample_from_multi_universe(universe):
     return sample
 
 
-def set_gpus(gpus, with_tf_gpu_memory_growth=True):
-    os.environ['CUDA_VISIBLE_DEVICES'] = gpus
-    if with_tf_gpu_memory_growth:
-        tf_gpu_memory_growth()
+def read_conf_file(file_path):
+    with open(file_path, 'r') as json_file:
+        data = json.load(json_file)
+    return data
 
-def tf_gpu_memory_growth():
-    gpus = tf.config.list_physical_devices('GPU')
-    if gpus:
-        try:
-            for gpu in gpus:
-                tf.config.experimental.set_memory_growth(gpu, True)
-            logical_gpus = tf.config.list_logical_devices('GPU')
-        except RuntimeError as e:
-            print(e)
+def write_conf_file(file_path, data):
+    with open(file_path, 'w') as json_file:
+        json.dump(data, json_file, indent=4)

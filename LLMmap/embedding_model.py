@@ -17,10 +17,13 @@ class Embedding:
         input_mask_expanded = attention_mask.unsqueeze(-1).expand(token_embeddings.size()).float()
         return torch.sum(token_embeddings * input_mask_expanded, 1) / torch.clamp(input_mask_expanded.sum(1), min=1e-9)
     
-    def get_embedding(self, s):
-        prompts_tok = self.tokenizer(s, return_tensors="pt", padding=True, add_special_tokens=True, truncation=True, max_length=self.max_length).to(self.model.device)
-        emb = self.get_embs(self.model(**prompts_tok), prompts_tok.attention_mask)
-        return emb.detach().cpu().numpy()
+    def get_embedding(self, s, numpy=False):
+        with torch.no_grad():
+            prompts_tok = self.tokenizer(s, return_tensors="pt", padding=True, add_special_tokens=True, truncation=True, max_length=self.max_length).to(self.model.device)
+            emb = self.get_embs(self.model(**prompts_tok), prompts_tok.attention_mask)
+        if numpy:
+            return emb.cpu().numpy()
+        return emb
     
     def get_embedding_batched(self, s, batch_size):
         n = len(s)
@@ -39,7 +42,7 @@ EMBEDDING_MODELS = [
     ('intfloat/multilingual-e5-large-instruct', Embedding),
 ]
 
-def load_model(model_id):
+def load_model(model_id, device_map='auto'):
     model_name, model_class = EMBEDDING_MODELS[model_id]
-    model = model_class(model_name)
+    model = model_class(model_name, device_map=device_map)
     return model

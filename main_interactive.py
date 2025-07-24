@@ -5,8 +5,7 @@ import time
 from prompt_toolkit import PromptSession
 from prompt_toolkit.key_binding import KeyBindings
 
-from LLMmap.utility import set_gpus
-from LLMmap.inference import load_model
+from LLMmap.inference import load_LLMmap
 
 kb = KeyBindings()
 
@@ -18,7 +17,6 @@ session = PromptSession(
     multiline=True,
     key_bindings=kb,
 )
-
 
 def int_loop(inf):
     # ANSI color codes
@@ -55,18 +53,12 @@ if __name__ == "__main__":
     # Create the parser
     parser = argparse.ArgumentParser(description='Interactive session for LLM fingeprinting')
     
-    parser.add_argument('--inference_model_path', type=str, help='Path inference model to use', default='./data/models/open_set_8q/')
+    parser.add_argument('--inference_model_path', type=str, help='Path inference model to use', default='./data/pretrained_models/default')
     
-    # Define the argument for the list of GPUs
-    parser.add_argument('--gpus', type=str, help='Comma-separated list of GPUs to use (e.g., "0,1,2,3")')
-
     # Parse the arguments
     args = parser.parse_args()
-    
-    if args.gpus:
-        set_gpus(args.gpus)
         
-    inf = load_model(args.inference_model_path)
+    conf, inf = load_LLMmap(args.inference_model_path)
     
     print("\n##### LLMs supported #####")
     print('',*inf.llms_supported, sep="\n\t")

@@ -1,88 +1,187 @@
-import tensorflow as tf
-import numpy as np
+import torch
+import torch.nn as nn
+from functools import partial
+from typing import Dict, Any, Tuple
 
-DEFAULT_HP = {
-    'num_blocks' : 3,
-    'feature_size' : 384,
-    'norm_layer' : tf.keras.layers.BatchNormalization,
-    'num_heads' : 4,
-    'activation' : 'gelu',
-    'optimizer' : (tf.keras.optimizers.Adam, {'learning_rate':0.0001}),
-    'with_add_dense_class' : False,
-    'emb_size' : 1024,
-    'num_queries' : 8,
-    'num_classes' : 42,
+# ---------------------------------------------------------------------
+# 1. MAPPINGS ─────────────────────────────────────────────────────────
+# ---------------------------------------------------------------------
+NORM_LAYERS: Dict[str, nn.Module] = {
+    "BatchNorm1d": nn.BatchNorm1d,
+    "LayerNorm":   nn.LayerNorm,
 }
 
+DEFAULT_HP: Dict[str, Any] = {
+    "num_blocks": 3,
+    "feature_size": 384,
+    "norm_layer": "BatchNorm1d",       
+    "num_heads": 4,
+    "activation": "gelu",
+    "optimizer": {
+        "name": "Adam",
+        "params": {"lr": 1e-4}
+    },
+    "with_add_dense_class": False,
+    "emb_size": 1024,
+    "num_queries": 8,
+}
 
-class ClassTokenLayer(tf.keras.layers.Layer):
-    def __init__(self, feature_size, **kwargs):
-        super(ClassTokenLayer, self).__init__(**kwargs)
-        self.feature_size = feature_size
+# ---------------------------------------------------------------------
+# 3. SMALL HELPERS ────────────────────────────────────────────────────
+# ---------------------------------------------------------------------
+def get_activation(name: str) -> nn.Module:
+    name = name.lower()
+    if name == "gelu":
+        return nn.GELU()
+    if name == "relu":
+        return nn.ReLU()
+    raise ValueError(f"Unsupported activation: {name!r}")
 
-    def build(self, input_shape):
-        self.class_token = self.add_weight(
-            shape=(1, self.feature_size),
-            initializer='random_normal',
-            trainable=True,
-            name='class_token'
-        )
-        super(ClassTokenLayer, self).build(input_shape)
+def make_norm(norm_cfg: Any, dim: int) -> nn.Module:
+    """
+    Accepts:
+        • a string from NORM_LAYERS        ("BatchNorm1d" / "LayerNorm")
+        • a norm class itself              (nn.BatchNorm1d / nn.LayerNorm)
+        • a partial / callable returning an nn.Module
+    """
+    # ── string → class ────────────────────────────────────────────────
+    if isinstance(norm_cfg, str):
+        try:
+            norm_cls = NORM_LAYERS[norm_cfg]
+        except KeyError:
+            raise ValueError(f"Unknown norm_layer '{norm_cfg}'. "
+                             f"Known: {list(NORM_LAYERS)}")
+        return norm_cls(dim)
 
-    def call(self, inputs):
-        batch_size = tf.shape(inputs)[0]
-        class_token_tiled = tf.tile(self.class_token[tf.newaxis], (batch_size, 1, 1))
-        return class_token_tiled
+    # ── class given directly ─────────────────────────────────────────
+    if norm_cfg in (nn.BatchNorm1d, nn.LayerNorm):
+        return norm_cfg(dim)
+
+    # ── partial / custom callable ────────────────────────────────────
+    return norm_cfg(dim)
 
 
-def transformer_block(x, hparams):
-    feature_size = hparams['feature_size']
-    norm = hparams['norm_layer']
-    num_heads = hparams['num_heads']
-    activation = hparams['activation']
-    xnorm = norm()(x)
-    xatt = tf.keras.layers.MultiHeadAttention(
-        num_heads,
-        feature_size
-    )(xnorm, xnorm)
-    x = tf.keras.layers.Add()([x, xatt])
-    xnorm = norm()(x)
-    m = tf.keras.layers.Dense(feature_size, activation=activation)(xnorm)
-    x = tf.keras.layers.Add()([x, m])
-    return x
-    
-    
-def make_inference_model(hparams=DEFAULT_HP, is_for_siamese=False):
-    num_classes = hparams['num_classes']
-    num_queries = hparams['num_queries']
-    feature_size = hparams['feature_size']
-    activation = hparams['activation']
-    
-    traces = tf.keras.Input(shape=(num_queries, hparams['emb_size']*2), name='inputs')
-    
-    # special token for output
-    class_token = ClassTokenLayer(feature_size, name='class_token_layer')(traces) 
-        
-    # emb. projection to feature_size
-    traces_emb = tf.keras.layers.Dense(feature_size, activation=activation)(traces)
-    
-    # concat traces with class_token
-    x = tf.keras.layers.Concatenate(1)([class_token, traces_emb])
-    
-    # transform
-    for _ in range(hparams['num_blocks']):
-        x = transformer_block(x, hparams)
-    
-    # gets output on class token
-    x = x[:,0]
-    
-    if not is_for_siamese:
-        if hparams['with_add_dense_class']:
-            x = tf.keras.layers.Dense(feature_size//2, activation=activation)(x)
-        output = tf.keras.layers.Dense(num_classes)(x)
-    else:
-        output = x
 
-    model = keras.Model(inputs=traces, outputs=output, name='InferenceModelLLMmap')
+class ClassToken(nn.Module):
+    def __init__(self, feature_size: int):
+        super().__init__()
+        self.token = nn.Parameter(torch.randn(1, 1, feature_size))
 
-    return model
+    def forward(self, x):                       # (B, S, F)
+        return self.token.expand(x.size(0), -1, -1)
+
+
+class TransformerBlock(nn.Module):
+    def __init__(self, hp: dict):
+        super().__init__()
+        F_  = hp["feature_size"]
+        H   = hp["num_heads"]
+        act = get_activation(hp["activation"])
+
+        # strings are resolved here ↓
+        self.norm1 = make_norm(hp["norm_layer"], F_)
+        self.attn  = nn.MultiheadAttention(F_, H, batch_first=True)
+        self.norm2 = make_norm(hp["norm_layer"], F_)
+        self.mlp   = nn.Sequential(nn.Linear(F_, F_), act)
+
+    def _apply_norm(self, norm, x):
+        if isinstance(norm, nn.BatchNorm1d):
+            return norm(x.transpose(1, 2)).transpose(1, 2)
+        return norm(x)
+
+    def forward(self, x):                       # (B, S, F)
+        x_norm = self._apply_norm(self.norm1, x)
+        attn_out, _ = self.attn(x_norm, x_norm, x_norm)
+        x = x + attn_out
+        x = x + self.mlp(self._apply_norm(self.norm2, x))
+        return x
+
+
+class InferenceModelLLMmap(nn.Module):
+    def __init__(self, hp: dict = DEFAULT_HP, *, is_for_siamese: bool = False):
+        super().__init__()
+        F_  = hp["feature_size"]
+        act = get_activation(hp["activation"])
+
+        self.cls_token = ClassToken(F_)
+        self.proj = nn.Linear(hp["emb_size"] * 2, F_)
+        self.act  = act
+        self.blocks = nn.ModuleList(TransformerBlock(hp) for _ in range(hp["num_blocks"]))
+
+        if not is_for_siamese:
+            if hp["with_add_dense_class"]:
+                self.pre_head = nn.Sequential(nn.Linear(F_, F_ // 2), act)
+                head_in = F_ // 2
+            else:
+                self.pre_head = nn.Identity()
+                head_in = F_
+            self.head = nn.Linear(head_in, hp["num_classes"])
+        else:
+            self.pre_head = nn.Identity()
+            self.head     = nn.Identity()
+
+    def forward(self, traces):                  # (B, Q, emb_size*2)
+        x = self.act(self.proj(traces))
+        x = torch.cat([self.cls_token(x), x], dim=1)  # prepend [CLS]
+        for blk in self.blocks:
+            x = blk(x)
+        x = x[:, 0]                                   # take [CLS]
+        x = self.pre_head(x)
+        return self.head(x)
+
+
+# Siamese net ------------------------------------------------------------------------------------------
+
+def euclidean_distance(a: torch.Tensor, b: torch.Tensor, eps: float = 1e-8) -> torch.Tensor:
+    """
+    Pair-wise Euclidean distance for two feature tensors.
+    Args:
+        a, b: (B, F) tensors
+    Returns:
+        (B, 1) distance column-vector
+    """
+    return torch.sqrt(((a - b) ** 2).sum(dim=1, keepdim=True) + eps)
+
+
+class SiameseNetwork(nn.Module):
+    """
+    Wrapper that turns a feature extractor into a full Siamese network
+    producing a similarity score in (0, 1).
+    """
+    def __init__(self, feature_extractor: nn.Module):
+        super().__init__()
+        self.f = feature_extractor                 # shared weights
+        self.bn = nn.BatchNorm1d(1)                # (B, 1)
+        self.fc = nn.Linear(1, 1)                  # (B, 1) → (B, 1)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            x: (B, 2, Q, emb_size*2)  – the first axis selects the two traces
+        Returns:
+            (B, 1) similarity score in (0, 1)
+        """
+        feat_a = self.f(x[:, 0])                   # (B, F)
+        feat_b = self.f(x[:, 1])                   # (B, F)
+
+        dist   = euclidean_distance(feat_a, feat_b)  # (B, 1)
+        norm   = self.bn(dist)                       # (B, 1)
+        logits = self.fc(norm)                       # (B, 1)
+        return torch.sigmoid(logits)                 # (B, 1)
+
+
+def make_siamese_network(fhparams: dict, f=None):
+    """
+    Returns:
+        siam  – full Siamese network (PyTorch nn.Module)
+        f     – the underlying feature extractor with shared weights
+    """
+
+    if f is None:
+        # 1. Shared feature extractor (no classification head)
+        f = InferenceModelLLMmap(fhparams, is_for_siamese=True)
+
+    # 2. Siamese wrapper
+    siam = SiameseNetwork(f)
+
+    return siam, f
