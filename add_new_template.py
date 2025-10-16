@@ -11,7 +11,7 @@ from LLMmap.llm import load_llm
 def main():
     parser = argparse.ArgumentParser(description="Generate templates for a new LLM using LLMmap and add it to the template file.")
     parser.add_argument('new_llm_name', type=str, help='Name or path of the new LLM')
-    parser.add_argument('new_llm_type', type=int, help='0:Hugging Face, 1:OpenAI, 2:Anthropic')
+    parser.add_argument('new_llm_type', type=int, help='0:Hugging Face, 1:OpenAI, 2:Anthropic, 3:OpenRouter')
     
     parser.add_argument('--prompt_conf_path', type=str, default='./confs/prompt_configurations/', help='Path to prompt configuration directory')
     parser.add_argument('--llmmap_path', type=str, default='./data/pretrained_models/default/', help='Path to the pretrained LLMmap model')

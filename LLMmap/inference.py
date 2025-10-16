@@ -62,7 +62,7 @@ def load_LLMmap(model_home_dir, device='cpu', **kargs):
         raise RuntimeError(f"Failed to initialize InferenceModelLLMmap: {e}")
 
     try:
-        net.load_state_dict(torch.load(model_path))
+        net.load_state_dict(torch.load(model_path, map_location='cpu'))
     except Exception as e:
         raise RuntimeError(f"Failed to load model state from {model_path}: {e}")
 
@@ -104,7 +104,7 @@ class InferenceModel:
         
     def __call__(self, answers):
         if len(answers) != len(self.queries):
-            raise Exeception(f"Model supports {self.queries} queries, {len(answers)} answers provided")
+            raise Exception(f"Model supports {self.queries} queries, {len(answers)} answers provided")
         answers = [self._preprocess_answers(answer) for answer in answers]
 
         with torch.no_grad():
