@@ -1,13 +1,17 @@
 import os
 import torch
-
+from dotenv import load_dotenv
 import transformers
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from openai import OpenAI
 from anthropic import Anthropic
 
 max_new_tokens = 100
-CACHE_DIR = os.environ.get('HF_MODEL_CACHE', None)
+
+load_dotenv() 
+CACHE_DIR = os.getenv('HF_MODEL_CACHE', None)
+
+
 
 class LLM_huggingface:
     
@@ -20,9 +24,9 @@ class LLM_huggingface:
         tokenizer_only=False,
     ):
 
-        api_key = os.environ.get('HUGGINGFACE_API_KEY', None)
+        api_key = os.getenv('HUGGINGFACE_API_KEY', None)
         if api_key is None:
-            raise Exception(f'Missing HuggingFace APIs key. Export "HUGGINGFACE_API_KEY" in the enverioment and try again')
+            raise Exception(f'Missing HuggingFace APIs key. Ensure the key is in your .env and try again.')
             
         self.llm_name = llm_name
         self.model_class = model_class
@@ -96,9 +100,9 @@ class LLM_huggingface:
 class LLM_OpenAI:
     def __init__(self, llm_name):
                 
-        api_key = os.environ.get('OPENAI_API_KEY', None)
+        api_key = os.getenv('OPENAI_API_KEY', None)
         if api_key is None:
-            raise Exception(f'Missing OpenAPI APIs key. Export "OPENAI_API_KEY" in the enverioment and try again')
+            raise Exception(f'Missing OpenAPI APIs key. Ensure the key is in your .env and try again.')
         
         self.client = OpenAI(api_key=api_key)
         self.llm_name = llm_name
@@ -146,9 +150,9 @@ class LLM_OpenAI:
 class LLM_Anthropic(LLM_OpenAI):
     def __init__(self, llm_name):
 
-        api_key = os.environ.get("ANTHROPIC_API_KEY")
+        api_key = os.getenv("ANTHROPIC_API_KEY")
         if api_key is None:
-            raise RuntimeError('Missing Anthropic API key. Export "ANTHROPIC_API_KEY" and try again.')
+            raise RuntimeError('Missing Anthropic API key. Ensure the key is in your .env and try again.')
                 
         self.client = client = Anthropic(api_key=api_key)
         self.llm_name = llm_name
@@ -186,11 +190,11 @@ class LLM_OpenRouter(LLM_OpenAI):
     """OpenRouter LLM loader using OpenAI-compatible API"""
     
     def __init__(self, llm_name):
-        api_key = os.environ.get('OPENROUTER_API_KEY', None)
+        api_key = os.getenv('OPENROUTER_API_KEY', None)
         if api_key is None:
-            raise Exception('Missing OpenRouter API key. Export "OPENROUTER_API_KEY" and try again')
+            raise Exception('Missing OpenRouter API key. Ensure the key is in your .env and try again.')
         
-        # Only difference: custom base_url
+        # custom base_url
         self.client = OpenAI(
             api_key=api_key,
             base_url="https://openrouter.ai/api/v1"

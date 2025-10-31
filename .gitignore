@@ -1,0 +1,21 @@
+# secrets 
+.env
+
+
+# output 
+/data/datasets/my_custom_dataset.jsonl
+
+# others 
+.env*
+
+.DS_Store
+llmmap-venv
+*.pyc
+*.pyo
+*.pyd
+*.db
+*.sqlite3
+*.log
+*.code-workspace
+__pycache__
+venv
